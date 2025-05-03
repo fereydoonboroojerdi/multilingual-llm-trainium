@@ -1,0 +1,68 @@
+name: Train and Deploy Multilingual LLM
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  SAGEMAKER_ROLE: arn:aws:iam::123456789012:role/sagemaker-execution
+  MODEL_BUCKET: s3://example-bucket-name
+  TRAINIUM_INSTANCE: ml.trn1.32xlarge
+  INFERENCE_INSTANCE: ml.trn1.2xlarge
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Configure AWS
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+        
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        pip install torch==2.0.0 transformers==4.28.1 datasets==2.11.0
+        pip install deepspeed==0.9.2 sagemaker==2.173.0
+        
+    - name: Train model
+      run: |
+        python train.py \
+          --dataset ${{ env.MODEL_BUCKET }}/data/multilingual-support.json \
+          --epochs 3 \
+          --batch-size 16 \
+          --output-dir ./model
+        
+    - name: Upload to S3
+      run: |
+        aws s3 sync ./model ${{ env.MODEL_BUCKET }}/models/multilingual-llm/
+        
+  deploy:
+    needs: train
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Configure AWS
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+        
+    - name: Deploy to Trainium
+      run: |
+        python deploy_trainium.py \
+          --model ${{ env.MODEL_BUCKET }}/models/multilingual-llm/ \
+          --role ${{ env.SAGEMAKER_ROLE }} \
+          --instance ${{ env.INFERENCE_INSTANCE }}
